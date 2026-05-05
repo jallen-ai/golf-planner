@@ -172,6 +172,19 @@ export default function HoleViewPage({ courseId, holeNumber }: Props) {
                 ({strategy.parScore >= 0 ? '+' : ''}{strategy.parScore.toFixed(1)} vs par {hole.par})
               </span>
             </div>
+            {strategy.recommendations.length > 0 && (() => {
+              const last = strategy.recommendations[strategy.recommendations.length - 1]
+              const shotsTaken = strategy.recommendations.length
+              const putts = strategy.expectedScore - shotsTaken + (last.expectedLie === 'green' ? 1 : 0)
+              const finishing = last.expectedLie === 'green'
+                ? `${putts.toFixed(1)} putts from ${Math.round(last.expectedDistanceToPin)}y`
+                : `${(strategy.expectedScore - (shotsTaken - 1)).toFixed(1)} more strokes from ${Math.round(last.expectedDistanceToPin)}y`
+              return (
+                <div className="muted" style={{ fontSize: '0.82rem', marginTop: 4 }}>
+                  {shotsTaken === 1 ? '1 shot' : `${shotsTaken} shots`} + {finishing}
+                </div>
+              )
+            })()}
           </div>
           {hasOverrides && (
             <button className="ghost" onClick={handleResetOverrides}>Reset</button>

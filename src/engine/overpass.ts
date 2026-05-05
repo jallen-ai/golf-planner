@@ -1,7 +1,7 @@
 // Overpass API client. Pulls golf=* features inside a bounding box around a course
 // and assembles them into our Course/Hole types.
 
-import { centroid, distancePointToSegmentYd, distanceYards } from './geometry'
+import { bufferLine, centroid, distancePointToSegmentYd, distanceYards } from './geometry'
 import type { Course, Hole, LonLat, Polygon } from '../types'
 
 const OVERPASS = 'https://overpass-api.de/api/interpreter'
@@ -56,6 +56,9 @@ export async function fetchCourseFromOverpass(args: {
   const { south, west, north, east } = args.bbox
   const bb = `${south},${west},${north},${east}`
   // Pull holes (ways), and all polygon features that might belong to those holes.
+  // Pull golf=* features plus general water bodies/waterways within the bbox.
+  // Many courses tag creeks/ponds as natural=water or waterway=stream rather than
+  // golf=water_hazard, so we need both to model hazards realistically.
   const query = `
     [out:json][timeout:45];
     (
@@ -67,6 +70,9 @@ export async function fetchCourseFromOverpass(args: {
       way["golf"="water_hazard"](${bb});
       way["golf"="lateral_water_hazard"](${bb});
       way["golf"="rough"](${bb});
+      way["natural"="water"](${bb});
+      way["waterway"~"^(stream|river|canal|drain|ditch)$"](${bb});
+      relation["natural"="water"](${bb});
     );
     out tags geom;
   `.trim()
@@ -117,9 +123,13 @@ export async function fetchCourseFromOverpass(args: {
   const tees = data.elements.filter((e) => e.tags?.golf === 'tee' && e.geometry)
   const fairways = data.elements.filter((e) => e.tags?.golf === 'fairway' && e.geometry)
   const bunkers = data.elements.filter((e) => e.tags?.golf === 'bunker' && e.geometry)
-  const waters = data.elements.filter(
-    (e) => (e.tags?.golf === 'water_hazard' || e.tags?.golf === 'lateral_water_hazard') && e.geometry,
-  )
+  const waters = data.elements.filter((e) => {
+    if (!e.geometry) return false
+    if (e.tags?.golf === 'water_hazard' || e.tags?.golf === 'lateral_water_hazard') return true
+    if (e.tags?.natural === 'water') return true
+    if (e.tags?.waterway && /^(stream|river|canal|drain|ditch)$/.test(e.tags.waterway)) return true
+    return false
+  })
 
   const PROXIMITY_YD = 35 // a feature within 35y of the hole centerline is part of that hole
 
@@ -136,6 +146,23 @@ export async function fetchCourseFromOverpass(args: {
       if (d < bestDist) { bestDist = d; best = i }
     }
     return bestDist <= PROXIMITY_YD ? best : null
+  }
+
+  // Attach a polygon to every hole whose centerline is within `maxDistYd` of any
+  // of the polygon's vertices. Used for long hazards like creeks that touch
+  // multiple holes.
+  function nearbyHoleIndices(ring: LonLat[], maxDistYd: number): number[] {
+    const matches: number[] = []
+    for (let i = 0; i < chosenHoles.length; i++) {
+      const line = geomToLine(chosenHoles[i].geometry!)
+      let minD = Infinity
+      for (const p of ring) {
+        const d = distancePointToLineYd(p, line)
+        if (d < minD) minD = d
+      }
+      if (minD <= maxDistYd) matches.push(i)
+    }
+    return matches
   }
 
   const holes: Hole[] = chosenHoles.map((h) => {
@@ -269,11 +296,28 @@ export async function fetchCourseFromOverpass(args: {
     holes[idx].bunkers.push(ring)
   }
   for (const w of waters) {
-    const ring = ringForFeature(w)
-    const c = centroid(ring.ring)
-    const idx = nearestHoleAttach(c)
-    if (idx == null) continue
-    holes[idx].waterHazards.push(ring)
+    if (!w.geometry || w.geometry.length === 0) continue
+    const isLine = !!w.tags?.waterway   // waterway=stream/river/etc are lines
+    let ring: Polygon
+    if (isLine) {
+      // Buffer the line into a ~4 yard wide polygon so it's a hazard polygon.
+      const halfWidth = 4
+      const buffered = bufferLine(w.geometry.map((p) => [p.lon, p.lat] as LonLat), halfWidth)
+      if (!buffered.length) continue
+      ring = { ring: buffered }
+    } else {
+      ring = ringForFeature(w)
+    }
+    if (isLine) {
+      // Creeks often span multiple holes; attach to every hole within reach.
+      const indices = nearbyHoleIndices(ring.ring, 80)
+      for (const i of indices) holes[i].waterHazards.push(ring)
+    } else {
+      const c = centroid(ring.ring)
+      const idx = nearestHoleAttach(c)
+      if (idx == null) continue
+      holes[idx].waterHazards.push(ring)
+    }
   }
 
   // Confidence: high if hole has tees + green + fairway, medium if missing fairway, low otherwise.

@@ -107,6 +107,53 @@ export function distancePointToSegmentYd(p: LonLat, a: LonLat, b: LonLat): numbe
   return distM * M_TO_YD
 }
 
+// Buffer a polyline into a thin polygon ring of the given half-width (yards).
+// Used to convert OSM waterway=stream / creek lines into hazard polygons.
+export function bufferLine(line: LonLat[], halfWidthYd: number): LonLat[] {
+  if (line.length < 2) return []
+  const M_TO_YD_LOCAL = 1.0936133
+  const widthM = halfWidthYd / M_TO_YD_LOCAL
+  const lat0 = line[Math.floor(line.length / 2)][1]
+  const cosLat = Math.cos((lat0 * Math.PI) / 180)
+  const toXY = (q: LonLat): [number, number] => [
+    q[0] * cosLat * 111319.49,
+    q[1] * 111319.49,
+  ]
+  const fromXY = (p: [number, number]): LonLat => [
+    p[0] / (cosLat * 111319.49),
+    p[1] / 111319.49,
+  ]
+
+  const xy = line.map(toXY)
+  const left: [number, number][] = []
+  const right: [number, number][] = []
+  for (let i = 0; i < xy.length; i++) {
+    let nx = 0, ny = 0
+    if (i === 0) {
+      nx = xy[1][0] - xy[0][0]
+      ny = xy[1][1] - xy[0][1]
+    } else if (i === xy.length - 1) {
+      nx = xy[i][0] - xy[i - 1][0]
+      ny = xy[i][1] - xy[i - 1][1]
+    } else {
+      nx = xy[i + 1][0] - xy[i - 1][0]
+      ny = xy[i + 1][1] - xy[i - 1][1]
+    }
+    const len = Math.hypot(nx, ny) || 1
+    const px = -ny / len * widthM
+    const py = nx / len * widthM
+    left.push([xy[i][0] + px, xy[i][1] + py])
+    right.push([xy[i][0] - px, xy[i][1] - py])
+  }
+  // Build closed ring: left forward + right reversed + close.
+  const ring: LonLat[] = [
+    ...left.map(fromXY),
+    ...right.reverse().map(fromXY),
+  ]
+  ring.push(ring[0])
+  return ring
+}
+
 // Bounding box around a list of points, expanded by `paddingYd`.
 export function bboxAround(points: LonLat[], paddingYd: number): { south: number; west: number; north: number; east: number } {
   let south = Infinity, west = Infinity, north = -Infinity, east = -Infinity

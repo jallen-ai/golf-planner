@@ -4,19 +4,36 @@
 // aim point, runs a Monte Carlo simulation of the player's dispersion and picks
 // the (club, aim) pair that minimizes expected strokes to hole out.
 //
-// Supports per-shot overrides (fixed aim, fixed club, or both) for user customization.
+// Applies golf-intuition rules:
+// - Driver only off the tee.
+// - Fairway woods (3W/5W) only from tee or fairway.
+// - Hybrids only from tee, fairway, or rough (not sand or recovery).
+// - From sand/recovery, only wedges and 9i+ are eligible.
+// - Hard reject aim points that lie inside a water/OB polygon.
+// - Penalize aims where >20% of dispersion samples land in water/OB.
+// - Lay-up logic: when a shot can't reach the green, prefer leaving 100/75/50y
+//   wedge distances over awkward in-betweens.
+//
+// Supports per-shot overrides (fixed aim, fixed club, or both).
 
 import type {
   ClubProfile, Hole, HoleStrategy, Lie, LonLat, PlayerProfile,
-  ShotOverride, ShotRecommendation, TeeMarker,
+  ShotOverride, ShotRecommendation, TeeMarker, ClubId,
 } from '../types'
 import { CLUB_ORDER } from '../types'
 import { bearingDeg, destination, distanceYards, pointInPolygon } from './geometry'
 import { expectedStrokes } from './sg'
 
-const SAMPLES = 60      // Monte Carlo samples per shot
-const GRID_STEP_YD = 15 // landing grid spacing along centerline
-const LATERAL_OFFSETS_YD = [-15, 0, 15]
+const SAMPLES = 150
+const GRID_STEP_YD = 12
+const LATERAL_OFFSETS_YD = [-20, -10, 0, 10, 20]
+const PENALTY_HAZARD_THRESHOLD = 0.20  // > 20% samples in water/OB → heavy penalty
+const PENALTY_HAZARD_MULTIPLIER = 1.5  // multiply expectedStrokesAfter by this
+
+// Preferred lay-up "wedge yardages" — distance from green at which most amateurs
+// have a comfortable full-swing wedge.
+const PREFERRED_LAYUP_DISTANCES = [100, 75, 60, 50, 40]
+const LAYUP_BONUS = 0.15  // shave this many strokes off EV when landing within 5y of a preferred dist
 
 function sampleNormal(): number {
   const u = Math.random() || 1e-9
@@ -47,13 +64,41 @@ function expectedFromPosition(point: LonLat, hole: Hole, handicap: number): numb
   return expectedStrokes(lie, distYd, handicap)
 }
 
+// Hard rules: which clubs can be played from which lies.
+function isClubAllowedFromLie(clubId: ClubId, lie: Lie): boolean {
+  // Driver: tee only.
+  if (clubId === 'driver') return lie === 'tee'
+  // Fairway woods: tee or fairway.
+  if (clubId === '3w' || clubId === '5w') return lie === 'tee' || lie === 'fairway'
+  // Hybrid: tee, fairway, or rough.
+  if (clubId === 'hybrid') return lie === 'tee' || lie === 'fairway' || lie === 'rough'
+  // Long irons: not from sand.
+  if (clubId === '3i' || clubId === '4i') return lie !== 'sand' && lie !== 'recovery'
+  // Mid irons: not from deep recovery.
+  if (clubId === '5i' || clubId === '6i') return lie !== 'recovery'
+  // Short irons & wedges: anywhere.
+  return true
+}
+
+function layupBonus(distAfterYd: number, hole: Hole, point: LonLat): number {
+  // Only apply if the resulting position is NOT on the green.
+  const lie = classifyLie(point, hole)
+  if (lie === 'green' || lie === 'water' || lie === 'ob') return 0
+  if (distAfterYd < 30) return 0  // already inside wedge range
+  for (const target of PREFERRED_LAYUP_DISTANCES) {
+    if (Math.abs(distAfterYd - target) <= 5) return LAYUP_BONUS
+  }
+  return 0
+}
+
 interface ShotEval {
   club: ClubProfile
   aim: LonLat
-  expectedStrokesAfter: number   // 1 + E[strokes from landing]
-  expectedDistanceAfter: number  // expected yards remaining after landing
+  expectedStrokesAfter: number
+  expectedDistanceAfter: number
   expectedLie: Lie
-  expectedLanding: LonLat        // mean landing point
+  expectedLanding: LonLat
+  hazardRate: number   // fraction of samples ending in water/OB
 }
 
 function evaluateShot(
@@ -66,6 +111,8 @@ function evaluateShot(
   let totalNext = 0
   let totalDist = 0
   let sumLon = 0, sumLat = 0
+  let bonusSum = 0
+  let hazardCount = 0
   const lieCounts: Record<Lie, number> = {
     tee: 0, fairway: 0, rough: 0, sand: 0, recovery: 0, green: 0, water: 0, ob: 0,
   }
@@ -80,6 +127,7 @@ function evaluateShot(
 
     const lie = classifyLie(landing, hole)
     lieCounts[lie]++
+    if (lie === 'water' || lie === 'ob') hazardCount++
     const distAfter = distanceToPin(landing, hole)
     totalDist += distAfter
     sumLon += landing[0]
@@ -89,13 +137,25 @@ function evaluateShot(
     } else {
       totalNext += expectedStrokes(lie, distAfter, handicap)
     }
+    bonusSum += layupBonus(distAfter, hole, landing)
   }
 
-  const expectedStrokesAfter = 1 + totalNext / SAMPLES
-  const expectedDistanceAfter = totalDist / SAMPLES
+  const meanDist = totalDist / SAMPLES
+  const meanBonus = bonusSum / SAMPLES
+  let expectedStrokesAfter = 1 + totalNext / SAMPLES - meanBonus
+  const hazardRate = hazardCount / SAMPLES
+
+  // If the aim point itself is inside a hazard, this aim is unsafe — major penalty.
+  const aimLie = classifyLie(aim, hole)
+  if (aimLie === 'water' || aimLie === 'ob') {
+    expectedStrokesAfter *= PENALTY_HAZARD_MULTIPLIER
+  } else if (hazardRate > PENALTY_HAZARD_THRESHOLD) {
+    expectedStrokesAfter *= PENALTY_HAZARD_MULTIPLIER
+  }
+
   const expectedLanding: LonLat = [sumLon / SAMPLES, sumLat / SAMPLES]
   const expectedLie = (Object.entries(lieCounts).sort((a, b) => b[1] - a[1])[0][0]) as Lie
-  return { club, aim, expectedStrokesAfter, expectedDistanceAfter, expectedLie, expectedLanding }
+  return { club, aim, expectedStrokesAfter, expectedDistanceAfter: meanDist, expectedLie, expectedLanding, hazardRate }
 }
 
 function generateAimCandidates(from: LonLat, hole: Hole, maxCarry: number): LonLat[] {
@@ -113,27 +173,28 @@ function generateAimCandidates(from: LonLat, hole: Hole, maxCarry: number): LonL
   return candidates
 }
 
-function clubsAvailable(player: PlayerProfile): ClubProfile[] {
-  return CLUB_ORDER.filter((id) => id !== 'putter' && player.bag[id]?.inBag).map((id) => player.bag[id])
+function clubsAllowedFromLie(player: PlayerProfile, lie: Lie): ClubProfile[] {
+  return CLUB_ORDER
+    .filter((id) => id !== 'putter' && player.bag[id]?.inBag && isClubAllowedFromLie(id, lie))
+    .map((id) => player.bag[id])
 }
 
-function rationaleFor(shot: ShotEval, hole: Hole, distAfter: number, _shotIndex: number): string {
+function rationaleFor(shot: ShotEval, _hole: Hole): string {
   const lie = shot.expectedLie
   const club = shot.club.id
-  if (lie === 'green') return `Reaches the green with ${club}; ${Math.round(distAfter)}y to the pin.`
-  if (lie === 'fairway') return `${club} to the fairway; ${Math.round(distAfter)}y left to the pin.`
-  if (lie === 'rough') return `Likely rough at ${Math.round(distAfter)}y — but better expectation than a longer alternative.`
-  if (lie === 'sand') return `Risk of finding sand. Other clubs flirt with worse trouble.`
-  if (lie === 'water') return `Best of bad options here — most clubs put water in play.`
-  if (lie === 'ob') return `OB is a major risk. Consider laying further back manually.`
-  return `${club} → ${Math.round(distAfter)}y remaining.`
-  // (hole arg kept for future context-aware messaging like "fade away from right water")
-  void hole
+  const dist = Math.round(shot.expectedDistanceAfter)
+  const hazPct = Math.round(shot.hazardRate * 100)
+  if (hazPct > 5) return `${club}: ~${hazPct}% chance of trouble — best of available options.`
+  if (lie === 'green') return `${club} reaches the green; ~${dist}y to the pin on average.`
+  if (lie === 'fairway') return `${club} to the fairway; ${dist}y left to the pin.`
+  if (lie === 'rough') return `${club} to the rough; ${dist}y left.`
+  if (lie === 'sand') return `${club}: bunker risk, but better expectation than a longer carry.`
+  return `${club} → ~${dist}y remaining.`
 }
 
 export interface PlanOptions {
-  startPoint?: LonLat                    // override tee position
-  shotOverrides?: ShotOverride[]         // override per shot index
+  startPoint?: LonLat
+  shotOverrides?: ShotOverride[]
   maxShots?: number
 }
 
@@ -147,7 +208,6 @@ export function planHole(
   const startPoint: LonLat | null = options.startPoint ?? tee?.position ?? null
   const handicap = player.handicap
 
-  // No tee → can't plan. Return placeholder requesting manual tee placement.
   if (!startPoint || !hole.greenPolygon.ring.length) {
     return {
       holeNumber: hole.number,
@@ -163,8 +223,11 @@ export function planHole(
 
   const recommendations: ShotRecommendation[] = []
   let position: LonLat = startPoint
+  // Track the lie at the current position. The very first shot starts at the
+  // tee marker, so lie='tee' (driver allowed). Subsequent shots use the
+  // classified lie at the actual landing point.
+  let currentLie: Lie = 'tee'
   let shotIndex = 0
-  const clubs = clubsAvailable(player)
   const overrides = options.shotOverrides ?? []
 
   while (shotIndex < maxShots) {
@@ -172,14 +235,13 @@ export function planHole(
     if (distRemaining < 25) break
 
     const ovr = overrides[shotIndex]
+    const eligibleClubs = clubsAllowedFromLie(player, currentLie)
     let best: ShotEval | null = null
 
     if (ovr?.fixedClub && ovr?.fixedAim) {
-      // Both fixed — simulate this exact shot.
       const c = player.bag[ovr.fixedClub]
       if (c) best = evaluateShot(position, ovr.fixedAim, c, hole, handicap)
     } else if (ovr?.fixedClub) {
-      // Fixed club; pick best aim within its reach.
       const c = player.bag[ovr.fixedClub]
       if (c) {
         const candidates = generateAimCandidates(position, hole, c.carry + c.rollout)
@@ -191,17 +253,15 @@ export function planHole(
         }
       }
     } else if (ovr?.fixedAim) {
-      // Fixed aim; pick best club to reach it.
       const aimDist = distanceYards(position, ovr.fixedAim)
-      for (const c of clubs) {
+      for (const c of eligibleClubs) {
         const reach = c.carry + c.rollout
         if (aimDist > reach + 15 || aimDist < 30) continue
         const shot = evaluateShot(position, ovr.fixedAim, c, hole, handicap)
         if (!best || shot.expectedStrokesAfter < best.expectedStrokesAfter) best = shot
       }
     } else {
-      // Free optimization.
-      for (const c of clubs) {
+      for (const c of eligibleClubs) {
         const candidates = generateAimCandidates(position, hole, c.carry + c.rollout)
         for (const aim of candidates) {
           const aimDist = distanceYards(position, aim)
@@ -225,16 +285,25 @@ export function planHole(
       expectedDistanceToPin: best.expectedDistanceAfter,
       expectedStrokesAfter: best.expectedStrokesAfter,
       shotDistance: shotDist,
-      rationale: rationaleFor(best, hole, best.expectedDistanceAfter, shotIndex),
+      rationale: rationaleFor(best, hole),
       overridden: !!ovr,
     })
     position = best.expectedLanding
+    currentLie = best.expectedLie
     shotIndex++
     if (best.expectedLie === 'green' || best.expectedDistanceAfter < 25) break
   }
 
-  const finalEV = expectedFromPosition(position, hole, handicap)
-  const expectedScore = recommendations.length + finalEV
+  // Score = (shots before last) + last shot's expectedStrokesAfter (already
+  // accounts for putts/chips from landing distribution). If no shots were
+  // taken (shouldn't happen), fall back to expectedFromPosition.
+  let expectedScore: number
+  if (recommendations.length > 0) {
+    const last = recommendations[recommendations.length - 1]
+    expectedScore = (recommendations.length - 1) + last.expectedStrokesAfter
+  } else {
+    expectedScore = expectedFromPosition(startPoint, hole, handicap)
+  }
 
   return {
     holeNumber: hole.number,
