@@ -7,8 +7,8 @@ import PlayerProfilePage from './pages/PlayerProfile'
 import CourseListPage from './pages/CourseList'
 import CourseImportPage from './pages/CourseImport'
 import CourseEditorPage from './pages/CourseEditor'
-import RoundPlannerPage from './pages/RoundPlanner'
-import RoundCardPage from './pages/RoundCard'
+import CourseOverviewPage from './pages/CourseOverview'
+import HoleViewPage from './pages/HoleView'
 
 function App() {
   const view = useNav((s) => s.view)
@@ -28,8 +28,8 @@ function App() {
     case 'courses': page = <CourseListPage />; break
     case 'import-course': page = <CourseImportPage />; break
     case 'edit-course': page = <CourseEditorPage courseId={view.courseId} />; break
-    case 'plan-round': page = <RoundPlannerPage courseId={view.courseId} />; break
-    case 'round-card': page = <RoundCardPage roundId={view.roundId} />; break
+    case 'course-overview': page = <CourseOverviewPage courseId={view.courseId} />; break
+    case 'hole-view': page = <HoleViewPage courseId={view.courseId} holeNumber={view.holeNumber} />; break
   }
 
   return (

@@ -31,7 +31,7 @@ export default function Home() {
                   <div style={{ fontWeight: 600 }}>{c.name}</div>
                   <div className="muted">{c.holes.length} holes · {c.source}</div>
                 </div>
-                <button onClick={() => go({ kind: 'plan-round', courseId: c.id })}>Plan</button>
+                <button onClick={() => go({ kind: 'course-overview', courseId: c.id })}>Plan</button>
               </div>
             ))}
             <button className="secondary" onClick={() => go({ kind: 'import-course' })}>+ Add course</button>

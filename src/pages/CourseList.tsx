@@ -29,7 +29,7 @@ export default function CourseListPage() {
                 <div className="muted">{c.holes.length} holes · {c.source}</div>
               </div>
               <div className="row" style={{ gap: '0.4rem' }}>
-                <button className="secondary" onClick={() => go({ kind: 'plan-round', courseId: c.id })}>Plan</button>
+                <button className="secondary" onClick={() => go({ kind: 'course-overview', courseId: c.id })}>Plan</button>
                 <button className="ghost" onClick={() => go({ kind: 'edit-course', courseId: c.id })}>Edit</button>
                 <button
                   className="danger"

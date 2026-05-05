@@ -90,20 +90,37 @@ export interface Course {
 export interface ShotRecommendation {
   shotIndex: number         // 0 = tee shot
   club: ClubId
-  aimPoint: LonLat
+  fromPoint: LonLat         // start of this shot
+  aimPoint: LonLat          // where we're aiming
+  expectedLandingPoint: LonLat  // most likely landing
   expectedLie: Lie
-  expectedDistanceToPin: number  // yards, after this shot
-  expectedStrokesAfter: number   // SG: expected strokes to hole out from resulting position
+  expectedDistanceToPin: number  // yards from landing to pin
+  expectedStrokesAfter: number   // SG to hole out from landing
+  shotDistance: number      // yards (from → aim)
   rationale: string
+  overridden: boolean       // user adjusted this shot
+}
+
+export interface ShotOverride {
+  fixedAim?: LonLat
+  fixedClub?: ClubId
+}
+
+export interface HoleOverride {
+  teePosition?: LonLat              // user-dragged tee start
+  shotOverrides?: ShotOverride[]    // indexed by shotIndex
+  pinPosition?: LonLat              // future: pin override
 }
 
 export interface HoleStrategy {
   holeNumber: number
   teeId: string
+  startPoint: LonLat              // where the plan starts (tee or override)
   recommendations: ShotRecommendation[]
   expectedScore: number
   parScore: number          // score relative to par
   confidence: 'high' | 'medium' | 'low'
+  needsManualTee: boolean   // true if hole has no tee and user hasn't placed one
 }
 
 export interface RoundPlan {
@@ -111,8 +128,10 @@ export interface RoundPlan {
   courseId: string
   courseName: string
   teeId: string
+  playerVersion: number     // playerSnapshot.updatedAt — bump invalidates cache
   playerSnapshot: PlayerProfile
   strategies: HoleStrategy[]
+  overrides: Record<number, HoleOverride>  // by hole number
   expectedScore: number
   generatedAt: number
 }

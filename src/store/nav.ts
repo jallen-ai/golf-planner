@@ -6,8 +6,8 @@ export type View =
   | { kind: 'courses' }
   | { kind: 'import-course' }
   | { kind: 'edit-course'; courseId: string }
-  | { kind: 'plan-round'; courseId: string }
-  | { kind: 'round-card'; roundId: string }
+  | { kind: 'course-overview'; courseId: string }
+  | { kind: 'hole-view'; courseId: string; holeNumber: number }
 
 interface NavStore {
   view: View
