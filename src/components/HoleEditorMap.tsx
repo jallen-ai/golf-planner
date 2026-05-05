@@ -43,6 +43,9 @@ interface Props {
   onTeeDrag: (pos: LonLat) => void
   onMapTap: (pos: LonLat) => void
   onSelect: (sel: Selection) => void
+  onDrawVertexDrag: (vertexIndex: number, newPos: LonLat) => void
+  onDrawVertexClick: (vertexIndex: number) => void   // tap a vertex while drawing to remove it
+  onPolygonVertexDrag: (vertexIndex: number, newPos: LonLat) => void
 }
 
 function polyLatLngs(p: DomainPolygon): L.LatLngExpression[] {
@@ -53,7 +56,8 @@ function ringLatLngs(r: LonLat[]): L.LatLngExpression[] {
 }
 
 export default function HoleEditorMap({
-  hole, teePosition, mode, selection, drawingPoints, onTeeDrag, onMapTap, onSelect,
+  hole, teePosition, mode, selection, drawingPoints,
+  onTeeDrag, onMapTap, onSelect, onDrawVertexDrag, onDrawVertexClick, onPolygonVertexDrag,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<L.Map | null>(null)
@@ -201,7 +205,7 @@ export default function HoleEditorMap({
     }
   }, [hole, teePosition, mode, selection, allPoints, onSelect, onTeeDrag])
 
-  // Render in-progress drawing.
+  // Render in-progress drawing — draggable vertex markers.
   useEffect(() => {
     const dl = drawingLayerRef.current
     if (!dl) return
@@ -211,25 +215,90 @@ export default function HoleEditorMap({
       fairway: '#5fa84a', bunker: '#a08245', water: '#1c6098',
       ob: '#c8533c', green: '#0a4d2e',
     }[mode] ?? '#888'
-    if (drawingPoints.length === 1) {
-      L.circleMarker([drawingPoints[0][1], drawingPoints[0][0]], {
-        radius: 5, color: colorByMode, fillColor: colorByMode, fillOpacity: 1,
-      }).addTo(dl)
-    } else {
+
+    // Draw the polygon outline (or line segment if only 2 points).
+    if (drawingPoints.length >= 2) {
       L.polygon(ringLatLngs([...drawingPoints, drawingPoints[0]]), {
         color: colorByMode,
         weight: 2,
         fillColor: colorByMode,
         fillOpacity: 0.2,
         dashArray: '4 4',
+        interactive: false,
       }).addTo(dl)
-      drawingPoints.forEach((p) => {
-        L.circleMarker([p[1], p[0]], {
-          radius: 4, color: colorByMode, fillColor: 'white', fillOpacity: 1, weight: 2,
-        }).addTo(dl)
+    }
+
+    drawingPoints.forEach((p, idx) => {
+      const handle = L.marker([p[1], p[0]], {
+        icon: L.divIcon({
+          className: '',
+          html: `<div style="width:14px;height:14px;border-radius:50%;background:white;border:3px solid ${colorByMode};box-shadow:0 0 0 1px rgba(0,0,0,0.3)"></div>`,
+          iconSize: [20, 20],
+          iconAnchor: [10, 10],
+        }),
+        draggable: true,
+        zIndexOffset: 1000,
+      }).addTo(dl)
+      handle.bindTooltip(`Point ${idx + 1} — drag to move, tap to remove`, { direction: 'top' })
+
+      handle.on('dragend', (e: L.LeafletEvent) => {
+        const m = e.target as L.Marker
+        const ll = m.getLatLng()
+        onDrawVertexDrag(idx, [ll.lng, ll.lat])
+      })
+      handle.on('click', (e: L.LeafletMouseEvent) => {
+        L.DomEvent.stopPropagation(e)
+        onDrawVertexClick(idx)
+      })
+    })
+  }, [drawingPoints, mode, onDrawVertexDrag, onDrawVertexClick])
+
+  // Render draggable handles for the selected polygon's vertices.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    // Use a separate transient layer attached to the main map.
+    const handlesLayer = L.layerGroup().addTo(map)
+    if (mode !== 'select' || !selection) return () => { handlesLayer.remove() }
+
+    let ring: LonLat[] | null = null
+    if (selection.kind === 'fairway') ring = hole.fairwayPolygons[selection.index]?.ring ?? null
+    else if (selection.kind === 'bunker') ring = hole.bunkers[selection.index]?.ring ?? null
+    else if (selection.kind === 'water') ring = hole.waterHazards[selection.index]?.ring ?? null
+    else if (selection.kind === 'ob') ring = hole.outOfBounds[selection.index]?.ring ?? null
+    else if (selection.kind === 'green') ring = hole.greenPolygon.ring
+    if (!ring) return () => { handlesLayer.remove() }
+
+    // Skip the closing duplicate (last == first).
+    const len = ring.length > 1 && ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1]
+      ? ring.length - 1
+      : ring.length
+
+    for (let i = 0; i < len; i++) {
+      const p = ring[i]
+      const handle = L.marker([p[1], p[0]], {
+        icon: L.divIcon({
+          className: '',
+          html: '<div style="width:14px;height:14px;border-radius:50%;background:#ffeb3b;border:3px solid #c8923c;box-shadow:0 0 0 1px rgba(0,0,0,0.3)"></div>',
+          iconSize: [20, 20],
+          iconAnchor: [10, 10],
+        }),
+        draggable: true,
+        zIndexOffset: 1000,
+      }).addTo(handlesLayer)
+      handle.bindTooltip(`Vertex ${i + 1}`, { direction: 'top' })
+      handle.on('dragend', (e: L.LeafletEvent) => {
+        const m = e.target as L.Marker
+        const ll = m.getLatLng()
+        onPolygonVertexDrag(i, [ll.lng, ll.lat])
+      })
+      handle.on('click', (e: L.LeafletMouseEvent) => {
+        L.DomEvent.stopPropagation(e)
       })
     }
-  }, [drawingPoints, mode])
+
+    return () => { handlesLayer.remove() }
+  }, [hole, mode, selection, onPolygonVertexDrag])
 
   const cursor: string = mode === 'select' ? 'pointer' : mode === 'tee' ? 'grab' : 'crosshair'
   return <div ref={containerRef} style={{ width: '100%', height: '52vh', minHeight: 320, borderRadius: 12, overflow: 'hidden', cursor }} />

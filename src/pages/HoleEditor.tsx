@@ -67,6 +67,47 @@ export default function HoleEditor({ courseId, holeNumber }: Props) {
     setDirty(true)
   }, [])
 
+  const handleDrawVertexDrag = useCallback((idx: number, pos: LonLat) => {
+    setDrawing((prev) => prev.map((p, i) => (i === idx ? pos : p)))
+  }, [])
+
+  const handleDrawVertexClick = useCallback((idx: number) => {
+    // Tap-to-remove the vertex.
+    setDrawing((prev) => prev.filter((_, i) => i !== idx))
+  }, [])
+
+  const handlePolygonVertexDrag = useCallback((idx: number, pos: LonLat) => {
+    if (!working || !selection) return
+    const updateRing = (poly: DomainPolygon): DomainPolygon => {
+      const ring = [...poly.ring]
+      // The ring may include a closing duplicate vertex (first == last).
+      const closed = ring.length > 1
+        && ring[0][0] === ring[ring.length - 1][0]
+        && ring[0][1] === ring[ring.length - 1][1]
+      if (idx < (closed ? ring.length - 1 : ring.length)) {
+        ring[idx] = pos
+        if (closed && idx === 0) ring[ring.length - 1] = pos
+      }
+      return { ring }
+    }
+    const next = { ...working }
+    if (selection.kind === 'fairway') {
+      next.fairwayPolygons = working.fairwayPolygons.map((p, i) => i === selection.index ? updateRing(p) : p)
+    } else if (selection.kind === 'bunker') {
+      next.bunkers = working.bunkers.map((p, i) => i === selection.index ? updateRing(p) : p)
+    } else if (selection.kind === 'water') {
+      next.waterHazards = working.waterHazards.map((p, i) => i === selection.index ? updateRing(p) : p)
+    } else if (selection.kind === 'ob') {
+      next.outOfBounds = working.outOfBounds.map((p, i) => i === selection.index ? updateRing(p) : p)
+    } else if (selection.kind === 'green') {
+      const updated = updateRing(working.greenPolygon)
+      next.greenPolygon = updated
+      if (updated.ring.length) next.greenCenter = centroid(updated.ring)
+    }
+    setWorking(next)
+    setDirty(true)
+  }, [working, selection])
+
   function finishDrawing() {
     if (!working || drawing.length < 3) return
     const ring: LonLat[] = [...drawing, drawing[0]]
@@ -171,9 +212,16 @@ export default function HoleEditor({ courseId, holeNumber }: Props) {
           <strong>Drawing {mode}.</strong>{' '}
           {drawing.length < 3
             ? `Tap on the map to add points. ${drawing.length}/3 minimum.`
-            : `${drawing.length} points placed. Tap "Finish" to close the polygon, or keep adding.`}
+            : `${drawing.length} points placed. Drag points to adjust, tap a point to remove, or tap "Finish".`}
           <div className="row" style={{ marginTop: 6, gap: 6 }}>
             <button onClick={finishDrawing} disabled={drawing.length < 3}>Finish</button>
+            <button
+              className="secondary"
+              onClick={() => setDrawing((p) => p.slice(0, -1))}
+              disabled={drawing.length === 0}
+            >
+              Undo last
+            </button>
             <button className="ghost" onClick={cancelDrawing}>Cancel</button>
           </div>
         </div>
@@ -181,10 +229,11 @@ export default function HoleEditor({ courseId, holeNumber }: Props) {
 
       {mode === 'select' && selection && (
         <div className="banner">
-          <strong>Selected:</strong> {selection.kind === 'green' ? 'Green' : `${selection.kind} #${selection.index + 1}`}
+          <strong>Selected:</strong> {selection.kind === 'green' ? 'Green' : `${selection.kind} #${selection.index + 1}`}.{' '}
+          Drag the yellow handles on the polygon to reshape it.
           <div className="row" style={{ marginTop: 6, gap: 6 }}>
             <button className="danger" onClick={deleteSelected}>Delete</button>
-            <button className="ghost" onClick={() => setSelection(null)}>Cancel</button>
+            <button className="ghost" onClick={() => setSelection(null)}>Done</button>
           </div>
         </div>
       )}
@@ -204,6 +253,9 @@ export default function HoleEditor({ courseId, holeNumber }: Props) {
         onTeeDrag={handleTeeDrag}
         onMapTap={handleMapTap}
         onSelect={(s) => setSelection(s)}
+        onDrawVertexDrag={handleDrawVertexDrag}
+        onDrawVertexClick={handleDrawVertexClick}
+        onPolygonVertexDrag={handlePolygonVertexDrag}
       />
 
       <div className="card">
@@ -211,8 +263,10 @@ export default function HoleEditor({ courseId, holeNumber }: Props) {
           <strong>How to edit:</strong>
           <ul style={{ margin: '0.4rem 0 0 1rem', padding: 0 }}>
             <li>Pick a tool (Fairway / Bunker / Water / OB / Green) → tap points around the feature → "Finish"</li>
+            <li>While drawing: drag a point to move it, tap a point to remove, "Undo last" to remove the most recent</li>
+            <li>Refine an existing shape: pick "Select" → tap the polygon → drag the yellow handles</li>
             <li>Move tee: pick "Tee" tool → tap new spot, or drag the tee marker</li>
-            <li>Delete: pick "Select" → tap a polygon → "Delete"</li>
+            <li>Delete a shape: pick "Select" → tap → "Delete"</li>
             <li>Save when done — affects strategy immediately</li>
           </ul>
         </div>
