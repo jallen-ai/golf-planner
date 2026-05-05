@@ -52,8 +52,9 @@ export interface Polygon {
 }
 
 export interface TeeMarker {
-  id: string                // e.g. "blue", "white", "red"
-  color?: string            // hex
+  id: string                // group id — e.g. "blue", "white", "back", "middle", "forward"
+  label?: string            // display label — e.g. "Blue", "Back tees"
+  color?: string            // hex if known
   position: LonLat          // representative point (centroid of tee polygon)
   yardage?: number          // scorecard yardage if known
 }

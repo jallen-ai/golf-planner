@@ -2,7 +2,7 @@
 // and assembles them into our Course/Hole types.
 
 import { centroid, distancePointToSegmentYd, distanceYards } from './geometry'
-import type { Course, Hole, LonLat, Polygon, TeeMarker } from '../types'
+import type { Course, Hole, LonLat, Polygon } from '../types'
 
 const OVERPASS = 'https://overpass-api.de/api/interpreter'
 
@@ -169,14 +169,90 @@ export async function fetchCourseFromOverpass(args: {
     holes[idx].greenPolygon = ring
     holes[idx].greenCenter = c
   }
+  // Stage 1: collect raw tees per hole, retaining all OSM tags so we can group later.
+  interface RawTee {
+    holeIdx: number
+    position: LonLat
+    rawTags: Record<string, string>
+    color?: string
+  }
+  const rawTees: RawTee[] = []
   for (const t of tees) {
     const ring = ringForFeature(t)
     const c = centroid(ring.ring)
     const idx = nearestHoleAttach(c)
     if (idx == null) continue
-    const id = (t.tags?.ref ?? t.tags?.name ?? `tee-${t.id}`).toString().toLowerCase()
-    const marker: TeeMarker = { id, position: c, color: t.tags?.colour }
-    holes[idx].tees.push(marker)
+    rawTees.push({
+      holeIdx: idx,
+      position: c,
+      rawTags: t.tags ?? {},
+      color: t.tags?.colour ?? t.tags?.color ?? t.tags?.['golf:colour'],
+    })
+  }
+
+  // Stage 2: choose a grouping strategy.
+  // (a) If most tees have a usable color/name tag, group by that.
+  // (b) Otherwise, rank tees per hole by distance to green (longest = "back").
+  function tagGroupKey(rt: RawTee): string | null {
+    const t = rt.rawTags
+    const colour = (t.colour ?? t.color ?? t['golf:colour'] ?? t['golf:color'])?.toLowerCase().trim()
+    if (colour) return colour
+    const ref = (t.ref ?? '').toLowerCase().trim()
+    if (ref && ref.length <= 12 && /^[a-z]/.test(ref)) return ref
+    const name = (t.name ?? '').toLowerCase().trim()
+    if (name && name.length <= 16) return name
+    return null
+  }
+  const taggedCount = rawTees.filter((rt) => tagGroupKey(rt) != null).length
+  const useTagGrouping = rawTees.length > 0 && taggedCount / rawTees.length >= 0.6
+
+  // Compute each tee's distance to its hole's green so we can rank.
+  // (We need green centers first — they were set above.)
+  function teeYardage(rt: RawTee): number {
+    const h = holes[rt.holeIdx]
+    if (!h.greenPolygon.ring.length) return 0
+    return distanceYards(rt.position, h.greenCenter)
+  }
+
+  const RANK_LABELS = ['Back', 'Middle', 'Forward', 'Junior'] as const
+  const RANK_IDS = ['back', 'middle', 'forward', 'junior'] as const
+
+  if (useTagGrouping) {
+    for (const rt of rawTees) {
+      const key = tagGroupKey(rt) ?? 'unknown'
+      holes[rt.holeIdx].tees.push({
+        id: key,
+        label: key.charAt(0).toUpperCase() + key.slice(1),
+        position: rt.position,
+        color: rt.color,
+      })
+    }
+  } else {
+    // Per-hole rank by yardage descending.
+    const byHole = new Map<number, RawTee[]>()
+    for (const rt of rawTees) {
+      const list = byHole.get(rt.holeIdx) ?? []
+      list.push(rt)
+      byHole.set(rt.holeIdx, list)
+    }
+    for (const [holeIdx, list] of byHole) {
+      const sorted = [...list].sort((a, b) => teeYardage(b) - teeYardage(a))
+      // Bucket into up to 4 ranks. If more than 4 tees, drop near-duplicates (within 10 yd of an existing rank).
+      const picked: RawTee[] = []
+      for (const t of sorted) {
+        if (picked.length >= RANK_IDS.length) break
+        if (picked.some((p) => Math.abs(teeYardage(p) - teeYardage(t)) < 10)) continue
+        picked.push(t)
+      }
+      picked.forEach((rt, rank) => {
+        holes[holeIdx].tees.push({
+          id: RANK_IDS[rank],
+          label: RANK_LABELS[rank] + ' tees',
+          position: rt.position,
+          color: rt.color,
+        })
+      })
+    }
   }
   for (const f of fairways) {
     const ring = ringForFeature(f)

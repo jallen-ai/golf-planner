@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNav } from '../store/nav'
 import { useCourses } from '../store/courses'
 import { usePlayer } from '../store/player'
@@ -18,8 +18,18 @@ export default function RoundPlannerPage({ courseId }: Props) {
     if (!course) return []
     const map = new Map<string, { id: string; label: string; count: number; totalYds: number }>()
     for (const h of course.holes) {
+      // If a hole has multiple tees with the same group id (rare but possible),
+      // keep only the longest one for that group on that hole.
+      const seen = new Map<string, number>()
       for (const t of h.tees) {
-        const cur = map.get(t.id) ?? { id: t.id, label: t.id, count: 0, totalYds: 0 }
+        const yd = t.yardage ?? 0
+        const prev = seen.get(t.id) ?? -1
+        if (yd > prev) seen.set(t.id, yd)
+      }
+      for (const t of h.tees) {
+        if ((t.yardage ?? 0) !== seen.get(t.id)) continue
+        const label = t.label ?? t.id.charAt(0).toUpperCase() + t.id.slice(1)
+        const cur = map.get(t.id) ?? { id: t.id, label, count: 0, totalYds: 0 }
         cur.count++
         cur.totalYds += t.yardage ?? 0
         map.set(t.id, cur)
@@ -28,7 +38,10 @@ export default function RoundPlannerPage({ courseId }: Props) {
     return [...map.values()].sort((a, b) => b.totalYds - a.totalYds)
   }, [course])
 
-  const [selectedTee, setSelectedTee] = useState<string>(allTees[0]?.id ?? '')
+  const [selectedTee, setSelectedTee] = useState<string>('')
+  useEffect(() => {
+    if (!selectedTee && allTees.length) setSelectedTee(allTees[0].id)
+  }, [allTees, selectedTee])
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState(0)
 
@@ -117,7 +130,7 @@ export default function RoundPlannerPage({ courseId }: Props) {
                       onChange={() => setSelectedTee(t.id)}
                       style={{ width: 'auto' }}
                     />
-                    <span style={{ fontWeight: 600, textTransform: 'capitalize' }}>{t.label}</span>
+                    <span style={{ fontWeight: 600 }}>{t.label}</span>
                   </div>
                   <span className="muted">{total} yds · {t.count} holes</span>
                 </label>
