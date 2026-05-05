@@ -238,6 +238,12 @@ export default function HoleViewPage({ courseId, holeNumber }: Props) {
           </button>
         ) : <span />}
       </div>
+
+      <div className="card" style={{ textAlign: 'center' }}>
+        <button className="secondary" onClick={() => go({ kind: 'edit-hole', courseId, holeNumber })}>
+          ✏️ Edit this hole's geometry
+        </button>
+      </div>
     </>
   )
 }

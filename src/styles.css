@@ -360,3 +360,85 @@ label { font-size: 0.85rem; color: var(--muted); display: block; margin-bottom: 
 .leaflet-container {
   font-family: inherit;
 }
+
+/* --- Hole editor tool palette --- */
+.editor-tools {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.tool-pill {
+  background: white;
+  color: var(--green-deep);
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  padding: 0.4rem 0.7rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+}
+.tool-pill.active {
+  background: var(--green-deep);
+  color: white;
+  border-color: var(--green-deep);
+}
+
+/* --- Manual scores grid --- */
+.manual-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0.4rem;
+}
+.manual-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.manual-cell input {
+  padding: 0.35rem;
+  font-size: 0.9rem;
+  text-align: center;
+  width: 100%;
+}
+
+/* --- Per-hole stats row --- */
+.hole-stats-row {
+  display: grid;
+  grid-template-columns: 30px 38px 50px 50px 60px 60px 60px;
+  gap: 0.4rem;
+  align-items: center;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+.hole-stats-row.header {
+  font-weight: 600;
+  font-size: 0.7rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.hole-stats-row.trouble {
+  background: linear-gradient(to right, rgba(214, 139, 46, 0.10), transparent);
+}
+
+/* --- Scorecard row trouble state --- */
+.scorecard-row.trouble {
+  background: linear-gradient(to right, rgba(214, 139, 46, 0.06), transparent);
+}
+.scorecard-row.trouble:hover {
+  background: linear-gradient(to right, rgba(214, 139, 46, 0.14), transparent);
+}
+.trouble-badge {
+  background: var(--warning);
+  color: white;
+  font-size: 0.62rem;
+  padding: 1px 6px;
+  border-radius: 999px;
+  margin-left: 0.4rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}

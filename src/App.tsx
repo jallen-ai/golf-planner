@@ -9,6 +9,8 @@ import CourseImportPage from './pages/CourseImport'
 import CourseEditorPage from './pages/CourseEditor'
 import CourseOverviewPage from './pages/CourseOverview'
 import HoleViewPage from './pages/HoleView'
+import HoleEditorPage from './pages/HoleEditor'
+import RoundsPage from './pages/Rounds'
 
 function App() {
   const view = useNav((s) => s.view)
@@ -30,6 +32,8 @@ function App() {
     case 'edit-course': page = <CourseEditorPage courseId={view.courseId} />; break
     case 'course-overview': page = <CourseOverviewPage courseId={view.courseId} />; break
     case 'hole-view': page = <HoleViewPage courseId={view.courseId} holeNumber={view.holeNumber} />; break
+    case 'edit-hole': page = <HoleEditorPage courseId={view.courseId} holeNumber={view.holeNumber} />; break
+    case 'rounds': page = <RoundsPage courseId={view.courseId} />; break
   }
 
   return (

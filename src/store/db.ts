@@ -1,5 +1,5 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
-import type { Course, PlayerProfile, RoundPlan } from '../types'
+import type { Course, PlayedRound, PlayerProfile, RoundPlan } from '../types'
 
 interface CaddyDB extends DBSchema {
   player: {
@@ -16,20 +16,32 @@ interface CaddyDB extends DBSchema {
     value: RoundPlan
     indexes: { 'by-course': string; 'by-date': number }
   }
+  playedRounds: {
+    key: string
+    value: PlayedRound
+    indexes: { 'by-course': string; 'by-date': string }
+  }
 }
 
 let dbPromise: Promise<IDBPDatabase<CaddyDB>> | null = null
 
 export function db() {
   if (!dbPromise) {
-    dbPromise = openDB<CaddyDB>('caddy', 1, {
-      upgrade(db) {
-        db.createObjectStore('player')
-        const courses = db.createObjectStore('courses', { keyPath: 'id' })
-        courses.createIndex('by-name', 'name')
-        const rounds = db.createObjectStore('rounds', { keyPath: 'id' })
-        rounds.createIndex('by-course', 'courseId')
-        rounds.createIndex('by-date', 'generatedAt')
+    dbPromise = openDB<CaddyDB>('caddy', 2, {
+      upgrade(db, oldVersion) {
+        if (oldVersion < 1) {
+          db.createObjectStore('player')
+          const courses = db.createObjectStore('courses', { keyPath: 'id' })
+          courses.createIndex('by-name', 'name')
+          const rounds = db.createObjectStore('rounds', { keyPath: 'id' })
+          rounds.createIndex('by-course', 'courseId')
+          rounds.createIndex('by-date', 'generatedAt')
+        }
+        if (oldVersion < 2) {
+          const pr = db.createObjectStore('playedRounds', { keyPath: 'id' })
+          pr.createIndex('by-course', 'courseId')
+          pr.createIndex('by-date', 'date')
+        }
       },
     })
   }
@@ -66,4 +78,16 @@ export async function getRounds(): Promise<RoundPlan[]> {
 
 export async function putRound(r: RoundPlan): Promise<void> {
   await (await db()).put('rounds', r)
+}
+
+export async function getPlayedRoundsByCourse(courseId: string): Promise<PlayedRound[]> {
+  return (await db()).getAllFromIndex('playedRounds', 'by-course', courseId)
+}
+
+export async function putPlayedRound(r: PlayedRound): Promise<void> {
+  await (await db()).put('playedRounds', r)
+}
+
+export async function deletePlayedRound(id: string): Promise<void> {
+  await (await db()).delete('playedRounds', id)
 }

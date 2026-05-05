@@ -123,6 +123,25 @@ export interface HoleStrategy {
   needsManualTee: boolean   // true if hole has no tee and user hasn't placed one
 }
 
+// Actual played rounds — score per hole. Fed by manual entry or 18Birdies/CSV paste.
+export interface PlayedRound {
+  id: string
+  courseId: string
+  date: string                    // YYYY-MM-DD
+  scores: (number | null)[]       // length 18; null = not played / no data
+  notes?: string
+}
+
+export interface HoleStats {
+  played: number              // count of rounds with a score for this hole
+  averageScore: number        // mean over played rounds
+  averageVsPar: number        // mean - par
+  bogeyOrWorseRate: number    // fraction of plays where score >= par+1
+  doubleOrWorseRate: number   // fraction of plays where score >= par+2
+  best: number                // min score
+  worst: number               // max score
+}
+
 export interface RoundPlan {
   id: string
   courseId: string

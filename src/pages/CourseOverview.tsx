@@ -5,8 +5,10 @@ import { useNav } from '../store/nav'
 import { useCourses } from '../store/courses'
 import { usePlayer } from '../store/player'
 import { CLUB_LABELS } from '../types'
-import type { Hole, RoundPlan } from '../types'
+import type { Hole, HoleStats, PlayedRound, RoundPlan } from '../types'
 import { loadRound, makeEmptyPlan, planAllHoles, saveRound } from '../engine/planRound'
+import { getPlayedRoundsByCourse } from '../store/db'
+import { computeStats } from '../engine/stats'
 
 interface Props { courseId: string }
 
@@ -41,6 +43,22 @@ export default function CourseOverviewPage({ courseId }: Props) {
   const [round, setRound] = useState<RoundPlan | null>(null)
   const [progress, setProgress] = useState<number>(0)
   const [computing, setComputing] = useState(false)
+  const [playedRounds, setPlayedRounds] = useState<PlayedRound[]>([])
+
+  useEffect(() => {
+    if (!course) return
+    let cancelled = false
+    ;(async () => {
+      const rs = await getPlayedRoundsByCourse(course.id)
+      if (!cancelled) setPlayedRounds(rs)
+    })()
+    return () => { cancelled = true }
+  }, [course])
+
+  const stats = useMemo(
+    () => course ? computeStats(course, playedRounds) : new Map<number, HoleStats>(),
+    [course, playedRounds],
+  )
 
   useEffect(() => {
     if (!teeId && tees.length) setTeeId(tees[0].id)
@@ -158,6 +176,7 @@ export default function CourseOverviewPage({ courseId }: Props) {
         {course.holes.map((hole) => {
           const strategy = round?.strategies.find((s) => s.holeNumber === hole.number)
           const tee = hole.tees.find((t) => t.id === teeId) ?? hole.tees[0]
+          const holeStats = stats.get(hole.number)
           return (
             <ScorecardRow
               key={hole.number}
@@ -166,38 +185,53 @@ export default function CourseOverviewPage({ courseId }: Props) {
               expected={strategy?.expectedScore}
               firstClub={strategy?.recommendations[0]?.club}
               needsManualTee={strategy?.needsManualTee}
+              stats={holeStats}
               onTap={() => go({ kind: 'hole-view', courseId: course.id, holeNumber: hole.number })}
             />
           )
         })}
       </div>
+
+      {playedRounds.length === 0 && (
+        <div className="card">
+          <div className="title">Add round history</div>
+          <p className="subtitle">Track your scores at this course to spot trouble holes.</p>
+          <button className="secondary" onClick={() => go({ kind: 'rounds', courseId: course.id })}>
+            📊 Add rounds
+          </button>
+        </div>
+      )}
     </>
   )
 }
 
 function ScorecardRow({
-  hole, yardage, expected, firstClub, needsManualTee, onTap,
+  hole, yardage, expected, firstClub, needsManualTee, stats, onTap,
 }: {
   hole: Hole
   yardage?: number
   expected?: number
   firstClub?: keyof typeof CLUB_LABELS
   needsManualTee?: boolean
+  stats?: HoleStats
   onTap: () => void
 }) {
   const delta = expected != null ? expected - hole.par : null
+  const trouble = stats && stats.averageVsPar >= 1.0
   return (
-    <button className="scorecard-row" onClick={onTap}>
+    <button className={`scorecard-row ${trouble ? 'trouble' : ''}`} onClick={onTap}>
       <span className="hole-num">{hole.number}</span>
       <div className="scorecard-meta">
         <div className="scorecard-title">
           {hole.name ?? `Hole ${hole.number}`}
           <span className="par-pill">Par {hole.par}</span>
+          {trouble && <span className="trouble-badge">⚠ trouble</span>}
         </div>
         <div className="muted scorecard-sub">
           {yardage ? `${yardage} yds` : '—'}
-          {firstClub ? <> · <strong style={{ color: 'var(--green-deep)' }}>{CLUB_LABELS[firstClub]}</strong> off the tee</> : null}
+          {firstClub ? <> · <strong style={{ color: 'var(--green-deep)' }}>{CLUB_LABELS[firstClub]}</strong></> : null}
           {needsManualTee ? <> · ⚠ tap to drop tee</> : null}
+          {stats ? <> · you avg {stats.averageScore.toFixed(1)} ({stats.averageVsPar >= 0 ? '+' : ''}{stats.averageVsPar.toFixed(1)}) over {stats.played}</> : null}
         </div>
       </div>
       <div className="scorecard-score">
