@@ -197,13 +197,23 @@ export default function HoleEditorMap({
       onTeeDrag([ll.lng, ll.lat])
     })
 
+  }, [hole, teePosition, mode, selection, onSelect, onTeeDrag])
+
+  // Fit bounds ONLY on initial load for this hole. Edits/drags shouldn't snap
+  // the user's zoom or pan back to the default.
+  const fittedHoleRef = useRef<number | null>(null)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    if (fittedHoleRef.current === hole.number) return
     if (allPoints.length) {
       map.fitBounds([
         [Math.min(...allPoints.map((p) => p[1])), Math.min(...allPoints.map((p) => p[0]))],
         [Math.max(...allPoints.map((p) => p[1])), Math.max(...allPoints.map((p) => p[0]))],
       ], { padding: [24, 24] })
+      fittedHoleRef.current = hole.number
     }
-  }, [hole, teePosition, mode, selection, allPoints, onSelect, onTeeDrag])
+  }, [hole.number, allPoints])
 
   // Render in-progress drawing — draggable vertex markers.
   useEffect(() => {

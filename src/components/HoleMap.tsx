@@ -210,11 +210,20 @@ export default function HoleMap({ hole, strategy, onTeeDrag, onAimDrag, onMapTap
       }).addTo(lg)
     }
 
-    // Fit bounds.
+  }, [hole, strategy, onTeeDrag, onAimDrag])
+
+  // Fit bounds ONLY on initial load for this hole. Re-renders (drags, edits)
+  // shouldn't snap the user's zoom/pan back to the default view.
+  const fittedHoleRef = useRef<number | null>(null)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    if (fittedHoleRef.current === hole.number) return
     if (allPoints.length) {
       map.fitBounds(llBounds(allPoints), { padding: [24, 24] })
+      fittedHoleRef.current = hole.number
     }
-  }, [hole, strategy, onTeeDrag, onAimDrag, allPoints])
+  }, [hole.number, allPoints])
 
   return <div ref={containerRef} style={{ width: '100%', height: '50vh', minHeight: 280, borderRadius: 12, overflow: 'hidden' }} />
 }
